@@ -8,75 +8,59 @@ import uuid
 # import tensorflow dependencies
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Layer, Conv2D, Dense, MaxPooling2D, Input, Flatten
+# Import metric calculations
+from tensorflow.keras.metrics import Precision, Recall
+
 import tensorflow as tf
 
 # import local dependencies
-from network import siamese_model
-from preprocess import train_data
+from model import model
+from network import siamese_model, L1Dist
+from preprocess import train_data, test_data
 
 # Avoid OOM Errors by settings the GPU memory
 gpus = tf.config.experimental.list_physical_devices('GPU')
 for gpu in gpus:
     tf.config.experimental.set_memory_growth(gpu, True)
 
-# Loss and optimizer
-binary_cross_loss = tf.losses.BinaryCrossentropy(from_logits=True)
-opt = tf.keras.optimizers.Adam(1e-4)  # 0.0001
 
-# Checkpoints
-checkpoint_dir = './training_checkpoints'
-# Create folder if it doesn't exist
-if not os.path.exists(checkpoint_dir):
-    os.makedirs(checkpoint_dir)
+def verify(model, detection_threshold, verification_threshold):
+    # Build results array
+    results = []
+    for image in os.listdir(os.path.join('application_data', 'verification_images')):
+        input_img = preprocess(os.path.join('application_data', 'input_image', 'input_image.jpg'))
+        validation_img = preprocess(os.path.join('application_data', 'verification_images', image))
 
-# TODO - Load the checkpoints if exists
-checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-checkpoint = tf.train.Checkpoint(optimizer=opt, siamese_model=siamese_model)
+        # Make Predictions
+        result = model.predict(list(np.expand_dims([input_img, validation_img], axis=1)))
+        results.append(result)
 
+    # Detection Threshold: Metric above which a prediciton is considered positive
+    detection = np.sum(np.array(results) > detection_threshold)
 
-# Train step
-@tf.function  # convert to a tensorflow function graphable
-def train_step(batch):
-    # Automatic differentiation
-    with tf.GradientTape() as tape:
-        # Get anchor and positive/negative image
-        X = batch[:2]
-        # Get the labels
-        y = batch[2]
+    # Verification Threshold: Proportion of positive predictions / total positive samples
+    verification = detection / len(os.listdir(os.path.join('application_data', 'verification_images')))
+    verified = verification > verification_threshold
 
-        # Forward pass
-        yhat = siamese_model(X, training=True)
-        # Calculate the loss
-        loss = binary_cross_loss(y, yhat)
-
-    # Calculate the gradients
-    grad = tape.gradient(loss, siamese_model.trainable_variables)
-
-    # Calculate updated weights and apply to the model
-    opt.apply_gradients(zip(grad, siamese_model.trainable_variables))
-
-    # Return the loss
-    return loss
+    return results, verified
 
 
-# Training loop
-def train(data, EPOCHS):
-    # Loop through the epochs
-    for epoch in range(1, EPOCHS + 1):
-        print("Epoch {}/{}".format(epoch, EPOCHS))
-        progbar = tf.keras.utils.Progbar(len(data))
-        # Loop through each batch
-        for idx, batch in enumerate(data):
-            # Run train_step
-            train_step(batch)
-            progbar.update(idx + 1)
+cap = cv2.VideoCapture(4)
+while cap.isOpened():
+    ret, frame = cap.read()
+    frame = frame[120:120 + 250, 200:200 + 250, :]
 
-        # Save checkpoint
-        if epoch % 10 == 0:
-            checkpoint.save(file_prefix=checkpoint_prefix)
+    cv2.imshow('Verification', frame)
 
+    # Verification trigger
+    if cv2.waitKey(10) & 0xFF == ord('v'):
+        # Save input image to application_data/input_image folder
+        cv2.imwrite(os.path.join('application_data', 'input_image', 'input_image.jpg'), frame)
+        # Run verification
+        results, verified = verify(model, 0.9, 0.7)
+        print(verified)
 
-# Train the model
-EPOCHS = 50
-train(train_data, EPOCHS)
-
+    if cv2.waitKey(10) & 0xFF == ord('q'):
+        break
+cap.release()
+cv2.destroyAllWindows()
