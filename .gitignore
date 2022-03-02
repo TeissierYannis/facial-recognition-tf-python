@@ -4,3 +4,6 @@ lfw
 training_checkpoints
 .DS_Store
 __pycache__
+siamesemodel.h5
+application_data/input_image/*
+application_data/verification_images/*
