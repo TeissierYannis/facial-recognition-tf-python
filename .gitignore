@@ -1,0 +1,6 @@
+.idea
+data
+lfw
+training_checkpoints
+.DS_Store
+__pycache__
